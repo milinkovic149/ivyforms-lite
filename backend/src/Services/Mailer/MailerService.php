@@ -1,0 +1,335 @@
+<?php
+
+/**
+ * @copyright © Melograno Venture Studio. All rights reserved.
+ * @licence   See COPYING.md for license details.
+ */
+
+namespace IvyForms\Services\Mailer;
+
+use IvyForms\Common\Sanitizer\Sanitizer;
+use IvyForms\Entity\Notification\Notification;
+
+class MailerService
+{
+    /**
+     * Send an email using WordPress wp_mail function
+     *
+     * @param Notification $notification The notification object with email data
+     * @param mixed[] $formData The submitted form data for template variables
+     * @param string[] $attachments Absolute local file paths to attach
+     *
+     * @return bool Whether the email was sent successfully
+     */
+    public function sendEmail(Notification $notification, array $formData, array $attachments = []): bool
+    {
+        // Extract notification data
+        $contact      = $notification->getNotificationContact();
+        $toAddresses  = $this->validatedAddresses($contact->getReceiver());
+        $ccAddresses  = $this->validatedAddresses($contact->getCc());
+        $bccAddresses = $this->validatedAddresses($contact->getBcc());
+        $to      = implode(', ', $toAddresses);
+        $cc      = implode(', ', $ccAddresses);
+        $bcc     = implode(', ', $bccAddresses);
+        $from    = $contact->getSender();
+        $replyTo = $contact->getReplyTo();
+
+        if ($to === '') {
+            return false;
+        }
+
+        if ($this->hasUnsafeHeaderValues($from, $replyTo, $cc, $bcc)) {
+            return false;
+        }
+
+        $subject = $notification->getSubject();
+        $message = $this->replacePlaceholders($notification->getMessage(), $formData);
+
+        $headers        = $this->buildHeaders($from, $replyTo);
+        $visibleHeaders = $headers;
+        if ($cc !== '') {
+            $visibleHeaders[] = 'Cc: ' . $cc;
+        }
+
+        $attachments = array_values(array_filter(
+            $attachments,
+            static function ($path): bool {
+                return is_string($path) && $path !== '' && is_readable($path);
+            }
+        ));
+
+        $deliveredWithBcc = false;
+        $sent             = $this->sendPrimaryEmail(
+            $to,
+            $subject,
+            $message,
+            $visibleHeaders,
+            $bccAddresses,
+            $deliveredWithBcc,
+            $attachments
+        );
+
+        if ($sent && !$deliveredWithBcc && $bccAddresses !== []) {
+            $sent = $this->sendBccCopies($bccAddresses, $subject, $message, $headers, $attachments);
+        }
+
+        return $sent;
+    }
+
+    /**
+     * Build the headers shared by every copy of the notification.
+     *
+     * @return string[]
+     */
+    private function buildHeaders(string $from, string $replyTo): array
+    {
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+        ];
+
+        if (!empty($from)) {
+            $headers[] = 'From: ' . $from;
+        }
+
+        // If replyTo is set and not identical to From, add Reply-To header
+        if (!empty($replyTo) && $replyTo !== $from) {
+            $headers[] = 'Reply-To: ' . $replyTo;
+        }
+
+        return $headers;
+    }
+
+    /**
+     * SMTP can hide Bcc from To/Cc while still showing To/Cc to the Bcc
+     * recipient. mail()/sendmail cannot, so those transports send copies later.
+     *
+     * @param string[] $headers
+     * @param string[] $bccAddresses
+     * @param string[] $attachments
+     */
+    private function sendPrimaryEmail(
+        string $to,
+        string $subject,
+        string $message,
+        array $headers,
+        array $bccAddresses,
+        bool &$deliveredWithBcc,
+        array $attachments = []
+    ): bool {
+        $parsedBcc = [];
+        foreach ($bccAddresses as $bccAddress) {
+            $parsedBcc[] = $this->parseMailbox($bccAddress);
+        }
+
+        $attachBcc = static function (\PHPMailer\PHPMailer\PHPMailer $phpmailer) use (
+            $parsedBcc,
+            &$deliveredWithBcc
+        ): void {
+            if ($phpmailer->Mailer !== 'smtp' || $parsedBcc === []) {
+                return;
+            }
+
+            foreach ($parsedBcc as $mailbox) {
+                $phpmailer->addBCC($mailbox['email'], $mailbox['name']);
+            }
+
+            $deliveredWithBcc = true;
+        };
+
+        add_action('phpmailer_init', $attachBcc, 1000);
+        try {
+            return wp_mail($to, $subject, $message, $headers, $attachments);
+        } finally {
+            remove_action('phpmailer_init', $attachBcc, 1000);
+        }
+    }
+
+    /**
+     * PHPMailer keeps the Bcc header in the message on the mail()/sendmail/qmail
+     * transports, so a shared send would expose Bcc addresses to the To and Cc
+     * recipients. Each Bcc recipient therefore gets its own copy, without the
+     * original To/Cc replayed as a Cc header (mail() would deliver to those too).
+     *
+     * @param string[] $bccAddresses
+     * @param string[] $headers
+     * @param string[] $attachments
+     */
+    private function sendBccCopies(
+        array $bccAddresses,
+        string $subject,
+        string $message,
+        array $headers,
+        array $attachments = []
+    ): bool {
+        $sent = true;
+
+        foreach ($bccAddresses as $bccAddress) {
+            $sent = wp_mail($bccAddress, $subject, $message, $headers, $attachments) && $sent;
+        }
+
+        return $sent;
+    }
+
+    /**
+     * Replace template variables in content with actual form data
+     * Supports format like {{field_name}}
+     *
+     * @param string $content Content with template variables
+     * @param mixed[] $formData Form submission data
+     *
+     * @return string Content with replaced variables
+     */
+    private function replacePlaceholders(string $content, array $formData): string
+    {
+        // Replace field variables like {{field_name}}
+        preg_match_all('/{{(.+?)}}/s', $content, $matches);
+
+        if (!empty($matches[1])) {
+            foreach ($matches[1] as $key => $fieldName) {
+                $fieldValue = $this->stringifyMailValue($formData[$fieldName] ?? '');
+
+                $content = str_replace($matches[0][$key], $fieldValue, $content);
+            }
+        }
+
+        // Replace special variables
+        $content = str_replace('{{all_fields}}', $this->getAllFieldsHtml($formData), $content);
+
+        return $content;
+    }
+
+    /**
+     * Generate HTML table with all form fields for email template
+     *
+     * @param mixed[] $formData Form submission data
+     *
+     * @return string HTML representation of all fields
+     */
+    private function getAllFieldsHtml(array $formData): string
+    {
+        // Generate HTML table for all fields
+        $html = '<h2>Form Submission Details</h2>';
+        $html .= '<table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">';
+
+        foreach ($formData as $fieldName => $fieldValue) {
+            // Skip system fields
+            if (in_array($fieldName, ['formId', 'nonce'])) {
+                continue;
+            }
+
+            $fieldValue = $this->stringifyMailValue($fieldValue);
+
+            // Format label by converting snake_case or camelCase to Title Case
+            $label = ucwords(str_replace(['_', '-'], ' ', $fieldName));
+
+            $html .= '<tr>';
+            $html .= '<th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">';
+            $html .=  esc_html($label) . '</th>';
+            $html .=  '</th>';
+            $html .= '<td style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">';
+            $html .=  esc_html($fieldValue) . '</td>';
+            $html .= '</td>';
+            $html .= '</tr>';
+        }
+
+        $html .= '</table>';
+
+        return $html;
+    }
+
+    /**
+     * Flatten nested submission values so mail placeholders never hit array-to-string warnings.
+     *
+     * @param mixed $value
+     */
+    private function stringifyMailValue($value): string
+    {
+        if (is_array($value)) {
+            $parts = [];
+            foreach ($value as $item) {
+                $part = $this->stringifyMailValue($item);
+                if ($part !== '') {
+                    $parts[] = $part;
+                }
+            }
+
+            return implode(', ', $parts);
+        }
+
+        if (is_object($value)) {
+            $encoded = wp_json_encode($value);
+
+            return is_string($encoded) ? $encoded : '';
+        }
+
+        return (string) $value;
+    }
+
+    /**
+     * @param string ...$values
+     */
+    private function hasUnsafeHeaderValues(string ...$values): bool
+    {
+        foreach ($values as $value) {
+            if (Sanitizer::containsEmailHeaderInjection($value)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Keep only validated email addresses for To:/Cc:/Bcc: recipients.
+     *
+     * @param string $addresses Comma-separated addresses
+     * @return string[]
+     */
+    private function validatedAddresses(string $addresses): array
+    {
+        $addresses = trim($addresses);
+        if ($addresses === '') {
+            return [];
+        }
+
+        $validated = [];
+
+        foreach (array_map('trim', explode(',', $addresses)) as $address) {
+            if ($address === '' || Sanitizer::containsEmailHeaderInjection($address)) {
+                continue;
+            }
+
+            $emailCandidate = $address;
+            if (preg_match('/<([^>]+)>/', $address, $match)) {
+                $emailCandidate = trim($match[1]);
+            }
+
+            if (Sanitizer::isValidEmail($emailCandidate)) {
+                $validated[] = $address;
+            }
+        }
+
+        return $validated;
+    }
+
+    /**
+     * Split a mailbox into the address PHPMailer expects and an optional name.
+     *
+     * @return array{email: string, name: string}
+     */
+    private function parseMailbox(string $address): array
+    {
+        $address = trim($address);
+        if (preg_match('/^(.*)<([^>]+)>\s*$/', $address, $match)) {
+            return [
+                'email' => trim($match[2]),
+                'name'  => trim($match[1], " \t\"'"),
+            ];
+        }
+
+        return [
+            'email' => $address,
+            'name'  => '',
+        ];
+    }
+}

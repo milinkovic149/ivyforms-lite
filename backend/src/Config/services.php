@@ -1,0 +1,381 @@
+<?php
+
+if (!defined('ABSPATH')) {
+    exit; // Exit if accessed directly
+}
+
+use IvyForms\Services\Menu\MenuManager;
+use IvyForms\Services\Menu\MenuMapper;
+use IvyForms\Services\Menu\MenuService;
+use IvyForms\Services\Integrations\PluginInstaller;
+use IvyForms\Services\Integrations\IntegrationRegistry;
+use IvyForms\Services\Integrations\IntegrationService;
+use IvyForms\Services\Permissions\PermissionResolver;
+use IvyForms\Services\Permissions\RoutePermissionService;
+use IvyForms\Controllers\Integrations\InstallPluginController;
+use IvyForms\Controllers\Integration\GetAllIntegrationsController;
+use IvyForms\Controllers\Integration\GetIntegrationController;
+use IvyForms\Controllers\Form\ExportFormController;
+use IvyForms\Controllers\Form\ImportFormController;
+use IvyForms\Services\Form\FormService;
+use IvyForms\Services\Form\FormImportExportService;
+use IvyForms\Services\Entry\EntryService;
+use IvyForms\Services\Field\FieldDuplicateValidationService;
+use IvyForms\Services\Field\FieldService;
+use IvyForms\Services\Mailer\MailerService;
+use IvyForms\Services\Notification\NotificationService;
+use IvyForms\Services\Security\SecurityService;
+use IvyForms\Services\Confirmation\ConfirmationService;
+use IvyForms\Services\Submission\FormSubmissionService;
+use IvyForms\Services\Submission\SubmissionDataFormatterService;
+use IvyForms\Services\Submission\SubmissionUploadService;
+use IvyForms\Services\GoogleSheets\Helpers\GoogleSheetsRequestSanitizer;
+use IvyForms\Services\GoogleSheets\Hooks\GoogleSheetsEntryHooks;
+use IvyForms\Services\GoogleSheets\Hooks\GoogleSheetsFormHooks;
+use IvyForms\Services\GoogleSheets\Hooks\InitializationHook as GoogleSheetsInitializationHook;
+use IvyForms\Repository\GoogleSheets\GoogleSheetsRepositoryInterface;
+use IvyForms\Services\GoogleSheets\GoogleSheetsDispatcherService;
+use IvyForms\Services\GoogleSheets\GoogleSheetsManagerService;
+use IvyForms\Services\GoogleSheets\GoogleSheetsService;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsConnectController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsOAuthCallbackController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsCreateController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsDeleteController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsDisconnectController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsListColumnsController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsListIntegrationsController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsListSpreadsheetsController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsListWorksheetsController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsPickerConfigController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsStatusController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsUpdateController;
+use IvyForms\Controllers\GoogleSheets\GoogleSheetsUpdateStatusController;
+use IvyForms\Services\Settings\SettingsService;
+use IvyForms\Services\Usage\UsageTrackingService;
+use IvyForms\Vendor\Melograno\UsageTracker\Collectors\Plugin\IvyFormsCollector;
+use IvyForms\Services\Payment\FormSubmissionPaymentService;
+use IvyForms\Services\Payment\OrderManager;
+use IvyForms\Services\Payment\PaymentAmountCalculator;
+use IvyForms\Services\Payment\PaymentGatewayRegistry;
+use IvyForms\Services\Payment\PaymentManager;
+use IvyForms\Services\Payment\SquarePaymentGateway;
+use IvyForms\Services\Multilingual\FormTranslationApplier;
+use IvyForms\Services\Multilingual\SubmissionLanguageResolver;
+use IvyForms\Services\Shortcode\Helpers\ShortcodeTranslationHelper;
+use IvyForms\Services\Multilingual\MultilingualHooks;
+use IvyForms\Services\Multilingual\MultilingualProviderResolver;
+use IvyForms\Services\Multilingual\MultilingualSyncService;
+use IvyForms\Services\Multilingual\StringRegistrar;
+use IvyForms\Services\Multilingual\StringRegistrySnapshot;
+use IvyForms\Services\Multilingual\TranslatableStringCollector;
+use IvyForms\Repository\Confirmation\ConfirmationRepositoryInterface;
+use IvyForms\Repository\Field\FieldRepositoryInterface;
+use IvyForms\Repository\FieldOptions\FieldOptionsRepositoryInterface;
+use IvyForms\Repository\Multilingual\StringRegistrySnapshotRepositoryInterface;
+use IvyForms\Repository\Form\FormRepositoryInterface;
+use IvyForms\Repository\Notification\NotificationRepositoryInterface;
+
+return [
+
+    MenuManager::class => function ($container) {
+        return new MenuManager(
+            new MenuService($container->get(RoutePermissionService::class)),
+            new MenuMapper($container->get(PermissionResolver::class))
+        );
+    },
+
+    PluginInstaller::class => function () {
+        return new PluginInstaller();
+    },
+
+    InstallPluginController::class => function ($container) {
+        return new InstallPluginController(
+            $container->get(PluginInstaller::class)
+        );
+    },
+
+    IntegrationRegistry::class => function () {
+        return new IntegrationRegistry();
+    },
+
+    IntegrationService::class => function ($container) {
+        return new IntegrationService(
+            $container->get(IntegrationRegistry::class),
+            $container->get(\IvyForms\Services\GoogleSheets\Hooks\InitializationHook::class)
+        );
+    },
+    SubmissionDataFormatterService::class => function () {
+        return new SubmissionDataFormatterService();
+    },
+
+    SubmissionUploadService::class => function () {
+        return new SubmissionUploadService();
+    },
+
+    FormSubmissionService::class => function ($container) {
+        return new FormSubmissionService(
+            $container->get(SubmissionUploadService::class),
+            $container->get(FormService::class),
+            $container->get(FieldService::class),
+            $container->get(FieldDuplicateValidationService::class),
+            $container->get(SecurityService::class),
+            $container->get(EntryService::class),
+            $container->get(NotificationService::class),
+            $container->get(MailerService::class),
+            $container->get(ConfirmationService::class),
+            $container->get(FormSubmissionPaymentService::class),
+            $container->get(SubmissionLanguageResolver::class)
+        );
+    },
+
+    SubmissionLanguageResolver::class => static function ($container) {
+        return new SubmissionLanguageResolver(
+            $container->get(FormTranslationApplier::class)
+        );
+    },
+
+    ShortcodeTranslationHelper::class => static function ($container) {
+        return new ShortcodeTranslationHelper(
+            $container->get(FormTranslationApplier::class)
+        );
+    },
+
+    MultilingualProviderResolver::class => static function () {
+        return new MultilingualProviderResolver();
+    },
+
+    StringRegistrySnapshot::class => static function ($container) {
+        return new StringRegistrySnapshot(
+            $container->get(StringRegistrySnapshotRepositoryInterface::class)
+        );
+    },
+
+    TranslatableStringCollector::class => static function ($container) {
+        return new TranslatableStringCollector(
+            $container->get(FormRepositoryInterface::class),
+            $container->get(FieldRepositoryInterface::class),
+            $container->get(FieldOptionsRepositoryInterface::class),
+            $container->get(NotificationRepositoryInterface::class),
+            $container->get(ConfirmationRepositoryInterface::class)
+        );
+    },
+
+    StringRegistrar::class => static function ($container) {
+        return new StringRegistrar(
+            $container->get(FormRepositoryInterface::class),
+            $container->get(StringRegistrySnapshot::class),
+            $container->get(MultilingualProviderResolver::class)
+        );
+    },
+
+    FormTranslationApplier::class => static function ($container) {
+        return new FormTranslationApplier(
+            $container->get(MultilingualProviderResolver::class)
+        );
+    },
+
+    MultilingualSyncService::class => static function ($container) {
+        return new MultilingualSyncService(
+            $container->get(TranslatableStringCollector::class),
+            $container->get(StringRegistrySnapshot::class),
+            $container->get(StringRegistrar::class),
+            $container->get(FormRepositoryInterface::class),
+            $container->get(MultilingualProviderResolver::class)
+        );
+    },
+
+    MultilingualHooks::class => static function ($container) {
+        return new MultilingualHooks(
+            $container->get(MultilingualSyncService::class),
+            $container->get(StringRegistrar::class)
+        );
+    },
+
+    GoogleSheetsRequestSanitizer::class => static function () {
+        return new GoogleSheetsRequestSanitizer();
+    },
+
+    GoogleSheetsService::class => static function ($container) {
+        return new GoogleSheetsService(
+            $container->get(SettingsService::class)
+        );
+    },
+
+    GoogleSheetsManagerService::class => static function ($container) {
+        return new GoogleSheetsManagerService(
+            $container->get(GoogleSheetsRepositoryInterface::class)
+        );
+    },
+
+    GoogleSheetsDispatcherService::class => static function ($container) {
+        return new GoogleSheetsDispatcherService(
+            $container->get(GoogleSheetsRepositoryInterface::class),
+            $container->get(GoogleSheetsService::class),
+            $container->get(SubmissionDataFormatterService::class)
+        );
+    },
+
+    GoogleSheetsEntryHooks::class => static function ($container) {
+        return new GoogleSheetsEntryHooks(
+            $container->get(GoogleSheetsDispatcherService::class)
+        );
+    },
+
+    GoogleSheetsFormHooks::class => static function ($container) {
+        return new GoogleSheetsFormHooks(
+            $container->get(GoogleSheetsRepositoryInterface::class)
+        );
+    },
+
+    GoogleSheetsInitializationHook::class => static function ($container) {
+        return new GoogleSheetsInitializationHook(
+            $container->get(SettingsService::class)
+        );
+    },
+
+    GoogleSheetsConnectController::class => static function ($container) {
+        return new GoogleSheetsConnectController(
+            $container->get(GoogleSheetsService::class)
+        );
+    },
+
+    GoogleSheetsOAuthCallbackController::class => static function ($container) {
+        return new GoogleSheetsOAuthCallbackController(
+            $container->get(GoogleSheetsService::class)
+        );
+    },
+
+    GoogleSheetsDisconnectController::class => static function ($container) {
+        return new GoogleSheetsDisconnectController(
+            $container->get(GoogleSheetsService::class)
+        );
+    },
+
+    GoogleSheetsStatusController::class => static function ($container) {
+        return new GoogleSheetsStatusController(
+            $container->get(GoogleSheetsService::class)
+        );
+    },
+
+    GoogleSheetsPickerConfigController::class => static function ($container) {
+        return new GoogleSheetsPickerConfigController(
+            $container->get(GoogleSheetsService::class)
+        );
+    },
+
+    GoogleSheetsListSpreadsheetsController::class => static function ($container) {
+        return new GoogleSheetsListSpreadsheetsController(
+            $container->get(GoogleSheetsService::class)
+        );
+    },
+
+    GoogleSheetsListWorksheetsController::class => static function ($container) {
+        return new GoogleSheetsListWorksheetsController(
+            $container->get(GoogleSheetsService::class)
+        );
+    },
+
+    GoogleSheetsListColumnsController::class => static function ($container) {
+        return new GoogleSheetsListColumnsController(
+            $container->get(GoogleSheetsService::class)
+        );
+    },
+
+    GoogleSheetsListIntegrationsController::class => static function ($container) {
+        return new GoogleSheetsListIntegrationsController(
+            $container->get(GoogleSheetsManagerService::class)
+        );
+    },
+
+    GoogleSheetsCreateController::class => static function ($container) {
+        return new GoogleSheetsCreateController(
+            $container->get(GoogleSheetsManagerService::class),
+            $container->get(GoogleSheetsRequestSanitizer::class)
+        );
+    },
+
+    GoogleSheetsUpdateController::class => static function ($container) {
+        return new GoogleSheetsUpdateController(
+            $container->get(GoogleSheetsManagerService::class),
+            $container->get(GoogleSheetsRequestSanitizer::class)
+        );
+    },
+
+    GoogleSheetsUpdateStatusController::class => static function ($container) {
+        return new GoogleSheetsUpdateStatusController(
+            $container->get(GoogleSheetsManagerService::class)
+        );
+    },
+
+    GoogleSheetsDeleteController::class => static function ($container) {
+        return new GoogleSheetsDeleteController(
+            $container->get(GoogleSheetsManagerService::class)
+        );
+    },
+
+    FormImportExportService::class => function ($container) {
+        return new FormImportExportService(
+            $container->get(FormService::class),
+            $container->get(FieldService::class),
+            $container->get(NotificationService::class),
+            $container->get(ConfirmationService::class),
+            $container->get(\IvyForms\Services\Permissions\AccessRulesFormScopeExtender::class)
+        );
+    },
+
+    ExportFormController::class => function ($container) {
+        return new ExportFormController(
+            $container->get(FormImportExportService::class),
+            $container->get(RoutePermissionService::class)
+        );
+    },
+
+    ImportFormController::class => function ($container) {
+        return new ImportFormController(
+            $container->get(FormImportExportService::class)
+        );
+    },
+
+    IvyFormsCollector::class => function () {
+        return new IvyFormsCollector();
+    },
+
+    UsageTrackingService::class => function ($container) {
+        return new UsageTrackingService($container->get(IvyFormsCollector::class));
+    },
+
+    PaymentGatewayRegistry::class => function ($container) {
+        $registry = new PaymentGatewayRegistry();
+        $registry->register($container->get(SquarePaymentGateway::class));
+
+        /**
+         * Allow Pro/addons to register additional payment gateways.
+         *
+         * The action receives the registry and PHP-DI container.
+         */
+        do_action('ivyforms/payment/register_gateways', $registry, $container);
+
+        return $registry;
+    },
+
+    FormSubmissionPaymentService::class => function ($container) {
+        return new FormSubmissionPaymentService(
+            $container->get(PaymentAmountCalculator::class),
+            $container->get(PaymentManager::class),
+            $container->get(OrderManager::class),
+            $container->get(PaymentGatewayRegistry::class)
+        );
+    },
+
+//    GetAllIntegrationsController::class => function ($container) {
+//        return new GetAllIntegrationsController(
+//            $container->get(IntegrationRegistry::class)
+//        );
+//    },
+//
+//    GetIntegrationController::class => function ($container) {
+//        return new GetIntegrationController(
+//            $container->get(IntegrationRegistry::class)
+//        );
+//    },
+];

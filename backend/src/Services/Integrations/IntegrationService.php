@@ -1,0 +1,345 @@
+<?php
+
+namespace IvyForms\Services\Integrations;
+
+use IvyForms\Common\Exceptions\InvalidArgumentException;
+use IvyForms\Common\Features\Features;
+use IvyForms\Services\GoogleSheets\Hooks\InitializationHook as GoogleSheetsInitializationHook;
+use IvyForms\Services\Payment\PaymentsFeature;
+
+/**
+ * Integration Service
+ *
+ * Initializes the integration registry and registers default Lite integrations
+ *
+ * @since 1.0.0
+ */
+class IntegrationService
+{
+    private IntegrationRegistry $registry;
+    private GoogleSheetsInitializationHook $googleSheetsInitializationHook;
+
+    public function __construct(
+        IntegrationRegistry $registry,
+        GoogleSheetsInitializationHook $googleSheetsInitializationHook
+    ) {
+        $this->registry = $registry;
+        $this->googleSheetsInitializationHook = $googleSheetsInitializationHook;
+    }
+
+    /**
+     * Initialize integrations
+     *
+     * @return void
+     * @throws InvalidArgumentException
+     */
+    public function init(): void
+    {
+        // Register Lite integrations
+        $this->registerLiteIntegrations();
+
+        /**
+         * Allow Pro/addons to register their integrations
+         *
+         * @since 1.0.0
+         *
+         * @param IntegrationRegistry $registry The integration registry instance
+         */
+        do_action('ivyforms/integrations/register', $this->registry);
+
+        $this->initializeGoogleSheets();
+    }
+
+    private function initializeGoogleSheets(): void
+    {
+        $this->googleSheetsInitializationHook->initialize();
+    }
+
+    /**
+     * Register default Lite integrations
+     *
+     * @return void
+     * @throws InvalidArgumentException
+     */
+    private function registerLiteIntegrations(): void
+    {
+        // wpDataTables Integration (Lite)
+        $this->registry->register('wpdatatables', [
+            'label' => 'wpdatatables_label',
+            'component' => 'WpDataTablesIntegrationSettings',
+            'icon' => 'wpdatatables',
+            'description' => 'wpdatatables_description',
+            'category' => 'Data Management',
+            'requiresAuth' => false,
+            'plan' => 'lite',
+            'settingsSchema' => [
+                'enabled' => [
+                    'type' => 'boolean',
+                    'default' => false,
+                ],
+            ],
+        ]);
+
+        // Amelia Booking Integration (Lite)
+        $this->registry->register('ameliabooking', [
+            'label' => 'ameliabooking_label',
+            'component' => 'AmeliaBookingIntegrationSettings',
+            'icon' => 'ameliabooking',
+            'description' => 'ameliabooking_description',
+            'category' => 'Booking',
+            'requiresAuth' => false,
+            'hasFormSettings' => false,
+            'plan' => 'lite',
+            'settingsSchema' => [
+                'enabled' => [
+                    'type' => 'boolean',
+                    'default' => false,
+                ],
+            ],
+        ]);
+
+        $this->registerPageBuilderIntegrations();
+
+        if (Features::enabled('slack')) {
+            $this->registry->register('slack', [
+                'label' => 'slack',
+                'component' => 'SlackIntegrationFormSettings',
+                'icon' => 'slack',
+                'description' => 'slack_description',
+                'category' => 'Communication',
+                'requiresAuth' => true,
+                'hasGlobalSettings' => true,
+                'formSettingsRequireActive' => true,
+                'plan' => 'lite',
+                'learnMoreUrl' => 'https://ivyforms.com/documentation/slack-integration/',
+                'settingsSchema' => [
+                    'enabled' => [
+                        'type' => 'boolean',
+                        'default' => false,
+                    ],
+                ],
+            ]);
+        }
+
+        $this->registerProPlaceholderIntegrations();
+
+        $this->registerPaymentIntegrations();
+
+        // Salesforce Integration (Pro - Agency)
+//        $this->registry->register('salesforce', [
+//            'label' => 'salesforce_label',
+//            'component' => 'SalesforceIntegrationSettings',
+//            'icon' => 'salesforce',
+//            'description' => 'salesforce_description',
+//            'category' => 'CRM',
+//            'requiresAuth' => true,
+//            'plan' => 'agency',
+//        ]);
+
+        // Google Sheets Integration (Lite) — registered last so it appears last in UI lists
+        $this->registry->register('google_sheets', [
+            'label' => 'google_sheets_label',
+            'component' => 'GoogleSheetsIntegrationSettings',
+            'icon' => 'google_sheets',
+            'description' => 'google_sheets_description',
+            'category' => 'Data Management',
+            'requiresAuth' => true,
+            'hasGlobalSettings' => true,
+            'plan' => 'lite',
+            'learnMoreUrl' => 'https://ivyforms.com/documentation/integrations/google-sheets/',
+            'settingsSchema' => [
+                'enabled' => [
+                    'type' => 'boolean',
+                    'default' => false,
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * Register Pro integrations as placeholders
+     *
+     * These are shown with an "Upgrade" button when Pro is not installed.
+     * When Pro is installed, they are overwritten by Pro's registrar.
+     *
+     * @return void
+     * @throws InvalidArgumentException
+     */
+    private function registerProPlaceholderIntegrations(): void
+    {
+        // MailChimp Integration (Pro - Essentials)
+        $this->registry->register('mailchimp', [
+            'label' => 'mailchimp_label',
+            'component' => 'MailChimpIntegrationSettings',
+            'icon' => 'mailchimp',
+            'description' => 'mailchimp_description',
+            'category' => 'Email Marketing',
+            'requiresAuth' => true,
+            'hasGlobalSettings' => true,
+            'plan' => 'essentials',
+        ]);
+
+        // MailerLite Integration (Pro - Essentials), hidden until its release flag is on
+        if (Features::enabled('mailerlite')) {
+            $this->registry->register('mailerlite', [
+                'label' => 'mailerlite',
+                'component' => 'MailerLiteIntegrationSettings',
+                'icon' => 'mailerlite',
+                'description' => 'mailerlite_description',
+                'category' => 'Email Marketing',
+                'requiresAuth' => true,
+                'hasGlobalSettings' => true,
+                'plan' => 'essentials',
+                'learnMoreUrl' => 'https://ivyforms.com/documentation/mailerlite-integration/',
+            ]);
+        }
+
+        // Brevo Integration (Pro - Essentials), hidden until its release flag is on
+        if (Features::enabled('brevo')) {
+            $this->registry->register('brevo', [
+                'label' => 'brevo_label',
+                'component' => 'BrevoIntegrationSettings',
+                'icon' => 'brevo',
+                'description' => 'brevo_description',
+                'category' => 'Email Marketing',
+                'requiresAuth' => true,
+                'hasGlobalSettings' => true,
+                'plan' => 'essentials',
+                'learnMoreUrl' => 'https://ivyforms.com/documentation/brevo-integration/',
+            ]);
+        }
+
+        // Webhooks Integration (Pro - Growth)
+        $this->registry->register('webhooks', [
+            'label' => 'webhooks_label',
+            'component' => 'WebhooksIntegrationSettings',
+            'icon' => 'webhooks',
+            'description' => 'webhooks_description',
+            'category' => 'Developer Tools',
+            'requiresAuth' => false,
+            'hasGlobalSettings' => false,
+            'plan' => 'growth',
+            'learnMoreUrl' => 'https://ivyforms.com/documentation/webhooks-integration/',
+            'settingsSchema' => [
+                'enabled' => [
+                    'type' => 'boolean',
+                    'default' => false,
+                ],
+            ],
+        ]);
+
+        // Zapier Integration (Pro - Growth)
+        $this->registry->register('zapier', [
+            'label' => 'zapier_label',
+            'component' => 'ZapierIntegrationSettings',
+            'icon' => 'zapier',
+            'description' => 'zapier_description',
+            'category' => 'Automation',
+            'requiresAuth' => false,
+            'hasGlobalSettings' => true,
+            'plan' => 'growth',
+        ]);
+
+        // Public API Integration (Pro - Agency)
+        $this->registry->register('public-api', [
+            'label' => 'public_api_integration_label',
+            'component' => 'PublicApiSettings',
+            'icon' => 'public-api',
+            'description' => 'public_api_integration_description',
+            'category' => 'Developer Tools',
+            'requiresAuth' => false,
+            'hasGlobalSettings' => true,
+            'hasFormSettings' => false,
+            'plan' => 'agency',
+            'learnMoreUrl' => 'https://ivyforms.com/documentation/rest-api/',
+            'settingsSchema' => [
+                'enabled' => [
+                    'type' => 'boolean',
+                    'default' => false,
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * Register page builder integrations (Lite)
+     *
+     * These are informational cards only: forms are embedded through the builder itself,
+     * so there is nothing to enable or configure — the card just links to the documentation.
+     *
+     * @return void
+     * @throws InvalidArgumentException
+     */
+    private function registerPageBuilderIntegrations(): void
+    {
+        $pageBuilderDocsUrls = [
+            'elementor' => 'https://ivyforms.com/documentation/elementor-integration/',
+            'divi'      => 'https://ivyforms.com/documentation/',
+            'gutenberg' => 'https://ivyforms.com/documentation/gutenberg-integration/',
+        ];
+
+        foreach ($pageBuilderDocsUrls as $slug => $docsUrl) {
+            $this->registry->register($slug, [
+                'label' => $slug . '_label',
+                'icon' => $slug,
+                'description' => $slug . '_description',
+                'category' => 'Page Builders',
+                'plan' => 'lite',
+                'docsOnly' => true,
+                'hasGlobalSettings' => false,
+                'hasFormSettings' => false,
+                'learnMoreUrl' => $docsUrl,
+            ]);
+        }
+    }
+
+    /**
+     * Payment integrations.
+     *
+     * Square stays "Coming soon". Stripe and PayPal follow PaymentsFeature and match
+     * the IvyForms 1.5 / Pro 1.2 release when that flag is on.
+     */
+    private function registerPaymentIntegrations(): void
+    {
+        $cardPaymentsComingSoon = !PaymentsFeature::isEnabled();
+
+        $this->registry->register('square', [
+            'label' => 'square_label',
+            'component' => 'SquareIntegrationSettings',
+            'icon' => 'square',
+            'description' => 'square_description',
+            'category' => 'Payment',
+            'requiresAuth' => true,
+            'hasGlobalSettings' => true,
+            'plan' => 'lite',
+            'learnMoreUrl' => 'https://ivyforms.com/documentation/',
+            'comingSoon' => true,
+        ]);
+
+        $this->registry->register('stripe', [
+            'label' => 'stripe_label',
+            'component' => 'StripeIntegrationSettings',
+            'icon' => 'stripe',
+            'description' => 'stripe_description',
+            'category' => 'Payment',
+            'requiresAuth' => true,
+            'hasGlobalSettings' => true,
+            'plan' => 'essentials',
+            'learnMoreUrl' => 'https://ivyforms.com/documentation/stripe-integration/',
+            'comingSoon' => $cardPaymentsComingSoon,
+        ]);
+
+        $this->registry->register('paypal', [
+            'label' => 'paypal_label',
+            'component' => 'PaypalIntegrationSettings',
+            'icon' => 'paypal',
+            'description' => 'paypal_description',
+            'category' => 'Payment',
+            'requiresAuth' => true,
+            'hasGlobalSettings' => true,
+            'plan' => 'essentials',
+            'learnMoreUrl' => 'https://ivyforms.com/documentation/paypal-integration/',
+            'comingSoon' => $cardPaymentsComingSoon,
+        ]);
+    }
+}

@@ -1,0 +1,504 @@
+.ivyforms-skeleton {
+    --ivyforms-skeleton-color: var(--map-base-dusk-fill--3, #dbdee3);
+    pointer-events: none;
+    user-select: none;
+}
+
+.ivyforms-skeleton *,
+.ivyforms-skeleton *::before {
+    box-sizing: border-box;
+}
+
+.ivyforms-skeleton-inner {
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 16px;
+    box-sizing: border-box;
+    font-family: Roboto, sans-serif;
+    animation: ivyforms-skeleton-pulse 1.5s infinite ease-in-out;
+}
+
+.ivyforms-skeleton-title {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    visibility: hidden;
+}
+
+.ivyforms-skeleton-description {
+    font-size: 16px;
+    margin-bottom: 24px;
+    visibility: hidden;
+}
+
+.ivyforms-skeleton-progress {
+    margin-bottom: 24px;
+    border-radius: 8px;
+    background: var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ivyforms-skeleton-vertical, 16px);
+}
+
+.ivyforms-skeleton-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ivyforms-skeleton-horizontal, 12px);
+    width: 100%;
+}
+
+.ivyforms-skeleton-col {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.ivyforms-skeleton-field {
+    padding: 12px 0;
+}
+
+.ivyforms-skeleton-field--flush {
+    padding: 0;
+}
+
+.ivyforms-skeleton-field--html {
+    margin-bottom: 16px;
+}
+
+.ivyforms-skeleton-item,
+.ivyforms-skeleton-subitem {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+}
+
+.ivyforms-skeleton-item > .ivyforms-skeleton-content,
+.ivyforms-skeleton-subitem > .ivyforms-skeleton-content {
+    align-self: stretch;
+}
+
+.ivyforms-skeleton-item--left,
+.ivyforms-skeleton-item--right {
+    flex-direction: row;
+}
+
+.ivyforms-skeleton-item--left > .ivyforms-skeleton-label,
+.ivyforms-skeleton-item--right > .ivyforms-skeleton-label {
+    flex-shrink: 0;
+    min-width: 50px;
+    max-width: 45%;
+    margin: 0 16px 0 0;
+}
+
+.ivyforms-skeleton-item--right > .ivyforms-skeleton-label {
+    order: 2;
+    margin: 0 0 0 16px;
+}
+
+.ivyforms-skeleton-item--left > .ivyforms-skeleton-content,
+.ivyforms-skeleton-item--right > .ivyforms-skeleton-content {
+    flex: 1 1 auto;
+}
+
+.ivyforms-skeleton-label {
+    display: block;
+    flex-shrink: 0;
+    height: calc(20px + var(--ivyforms-skeleton-label-pad, 0px) * 6);
+    max-width: 100%;
+    margin-bottom: 6px;
+    border-radius: 4px;
+    background: var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-label--hidden {
+    height: calc(var(--ivyforms-skeleton-label-pad, 0px) * 6);
+    background: none;
+}
+
+.ivyforms-skeleton-label--asterisk {
+    height: calc(20px + var(--ivyforms-skeleton-label-pad, 0px) * 6);
+}
+
+.ivyforms-skeleton-subitem > .ivyforms-skeleton-label {
+    height: calc(20px + var(--ivyforms-skeleton-label-pad, 0px) * 4);
+}
+
+.ivyforms-skeleton-label-line {
+    flex-shrink: 0;
+    max-width: 100%;
+}
+
+.ivyforms-skeleton-label--main {
+    display: inline-block;
+    height: auto;
+    padding: var(--ivyforms-skeleton-label-pad, 0px) 0;
+    margin: 0 0 8px;
+    font-size: 16px;
+    line-height: 22px;
+    vertical-align: baseline;
+}
+
+.ivyforms-skeleton-item--compound > .ivyforms-skeleton-label-line {
+    min-width: 100px;
+    margin: 0 16px 0 0;
+}
+
+.ivyforms-skeleton-item--compound.ivyforms-skeleton-item--right > .ivyforms-skeleton-label-line {
+    order: 2;
+    margin: 0 0 0 16px;
+}
+
+.ivyforms-skeleton-label--section {
+    height: 20px;
+    margin: 0;
+}
+
+.ivyforms-skeleton-content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.ivyforms-skeleton-block {
+    display: block;
+    width: 100%;
+    border-radius: 6px;
+    background: var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-input {
+    height: var(--ivyforms-skeleton-input, 40px);
+}
+
+.ivyforms-skeleton-input--phone {
+    height: var(--ivyforms-skeleton-phone, 40px);
+}
+
+.ivyforms-skeleton-help {
+    font-size: 14px;
+    line-height: 20px;
+}
+
+.ivyforms-skeleton-help--spaced {
+    margin-top: 8px;
+}
+
+.ivyforms-skeleton-help--section {
+    margin-top: 4px;
+}
+
+.ivyforms-skeleton-text {
+    color: transparent;
+    border-radius: 4px;
+    background: var(--ivyforms-skeleton-color);
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+}
+
+.ivyforms-skeleton-stack {
+    display: flex;
+    flex-direction: column;
+}
+
+.ivyforms-skeleton-grid {
+    display: grid;
+}
+
+.ivyforms-skeleton-subrow {
+    display: flex;
+}
+
+.ivyforms-skeleton-subrow > .ivyforms-skeleton-subitem {
+    flex: 1 1 0;
+}
+
+.ivyforms-skeleton-options {
+    display: grid;
+}
+
+.ivyforms-skeleton-options.is-padded {
+    padding: 8px 0;
+}
+
+.ivyforms-skeleton-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 24px;
+    min-width: 0;
+}
+
+.ivyforms-skeleton-option--button {
+    height: 26px;
+}
+
+.ivyforms-skeleton-marker {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background: var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-option--radio .ivyforms-skeleton-marker {
+    border-radius: 50%;
+}
+
+.ivyforms-skeleton-option-text {
+    display: block;
+    height: 12px;
+    max-width: calc(100% - 24px);
+    border-radius: 4px;
+    background: var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-gdpr {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+}
+
+.ivyforms-skeleton-gdpr > .ivyforms-skeleton-marker {
+    width: 20px;
+    height: 20px;
+}
+
+.ivyforms-skeleton-gdpr-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 16px;
+    line-height: 22px;
+}
+
+.ivyforms-skeleton-rating {
+    display: flex;
+    flex-wrap: wrap;
+    min-height: 24px;
+}
+
+.ivyforms-skeleton-star {
+    width: var(--ivyforms-skeleton-star, 24px);
+    height: var(--ivyforms-skeleton-star, 24px);
+    margin-right: 8px;
+    border-radius: 4px;
+    background: var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-field--section {
+    margin-bottom: 12px;
+    border-top: 1px solid var(--ivyforms-skeleton-color);
+    border-bottom: 1px solid var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-section-header {
+    padding: 8px 12px;
+}
+
+.ivyforms-skeleton-section-header.is-collapsible {
+    min-height: 40px;
+}
+
+.ivyforms-skeleton-section-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 12px;
+}
+
+.ivyforms-skeleton-likert {
+    border-top: 1px solid transparent;
+}
+
+.ivyforms-skeleton-likert-header {
+    display: flex;
+    border-bottom: 1px solid transparent;
+    font-size: 16px;
+    line-height: 22px;
+}
+
+.ivyforms-skeleton-likert-corner {
+    flex: 0 0 160px;
+}
+
+.ivyforms-skeleton-likert-heading {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 4px 8px;
+    text-align: center;
+    overflow-wrap: break-word;
+    visibility: hidden;
+}
+
+.ivyforms-skeleton-likert-row {
+    height: 60px;
+    margin-bottom: 1px;
+    border-radius: 0;
+}
+
+.ivyforms-skeleton-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--ivyforms-skeleton-color);
+    border-radius: 6px;
+}
+
+.ivyforms-skeleton-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 4px;
+    border-top: 1px solid var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-tool {
+    width: 36px;
+    height: 36px;
+}
+
+.ivyforms-skeleton-tool--tall {
+    height: 41px;
+}
+
+.ivyforms-skeleton-tool--select {
+    width: 130px;
+    height: 41px;
+    margin-left: 8px;
+    border-radius: 6px;
+    background: var(--ivyforms-skeleton-color);
+}
+
+.ivyforms-skeleton-tool--select:last-child {
+    height: 40px;
+}
+
+.ivyforms-skeleton-actions {
+    display: flex;
+    margin-top: 12px;
+}
+
+.ivyforms-skeleton-actions--center {
+    justify-content: center;
+}
+
+.ivyforms-skeleton-actions--right,
+.ivyforms-skeleton-actions--pages {
+    justify-content: flex-end;
+}
+
+.ivyforms-skeleton-actions--pages {
+    margin-top: 24px;
+}
+
+.ivyforms-skeleton-button {
+    display: inline-flex;
+    max-width: 100%;
+    min-width: 4.5rem;
+    min-height: 2.5rem;
+    line-height: normal;
+    border-style: solid;
+    border-color: transparent;
+    border-radius: 6px;
+    background: var(--map-base-dusk-fill--2, #c0c5cb);
+}
+
+.ivyforms-skeleton-button::before {
+    content: "\200b";
+}
+
+.ivyforms-skeleton-welcome {
+    min-height: 266px;
+    border-radius: 8px;
+}
+
+.ivyforms-skeleton-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+}
+
+.ivyforms-skeleton-dialog .ivyforms-skeleton-field {
+    padding: 0;
+}
+
+.ivyforms-skeleton-dialog-footer {
+    height: 72px;
+}
+
+.ivyforms-skeleton--reset .ivyforms-skeleton-inner {
+    font-family: inherit;
+}
+
+.ivyforms-skeleton--reset .ivyforms-skeleton-item > .ivyforms-skeleton-label:not(.ivyforms-skeleton-label--hidden),
+.ivyforms-skeleton--reset .ivyforms-skeleton-subitem--address > .ivyforms-skeleton-label,
+.ivyforms-skeleton--reset .ivyforms-skeleton-label--main,
+.ivyforms-skeleton--reset .ivyforms-skeleton-help,
+.ivyforms-skeleton--reset .ivyforms-skeleton-gdpr-text {
+    height: auto;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+.ivyforms-skeleton--reset .ivyforms-skeleton-item > .ivyforms-skeleton-label:not(.ivyforms-skeleton-label--hidden)::before,
+.ivyforms-skeleton--reset .ivyforms-skeleton-subitem--address > .ivyforms-skeleton-label::before,
+.ivyforms-skeleton--reset .ivyforms-skeleton-option::after {
+    content: "\200b";
+}
+
+.ivyforms-skeleton--reset .ivyforms-skeleton-option {
+    height: auto;
+    min-height: 24px;
+}
+
+.ivyforms-skeleton--reset .ivyforms-skeleton-button {
+    min-width: 0;
+    min-height: 0;
+    padding: 1px 6px;
+    border-width: 2px;
+    font-size: inherit;
+}
+
+@media (max-width: 768px) {
+    .ivyforms-skeleton-inner {
+        max-width: 100%;
+        padding: 0 12px;
+    }
+
+    .ivyforms-skeleton-row {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .ivyforms-skeleton-col {
+        width: 100% !important;
+    }
+
+    .ivyforms-skeleton-dialog {
+        padding: 12px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ivyforms-skeleton-inner {
+        animation: none;
+    }
+}
+
+@keyframes ivyforms-skeleton-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+}

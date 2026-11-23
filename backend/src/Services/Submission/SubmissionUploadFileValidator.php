@@ -1,0 +1,235 @@
+<?php
+
+/**
+ * @copyright © Melograno Venture Studio. All rights reserved.
+ * @licence   See COPYING.md for license details.
+ */
+
+declare(strict_types=1);
+
+namespace IvyForms\Services\Submission;
+
+use IvyForms\Common\Exceptions\FieldValidationException;
+use IvyForms\Common\Exceptions\ValidationException;
+use IvyForms\Common\Upload\UploadFileExtensionPolicy;
+use IvyForms\Entity\Field\Field as FieldEntity;
+use IvyForms\Services\Translations\BackendStrings;
+
+/**
+ * Validates multipart file parts before they are stored.
+ */
+final class SubmissionUploadFileValidator
+{
+    /**
+     * @param array<string, mixed> $fileStruct
+     */
+    public static function assertUploadSucceeded(array $fileStruct, ?string $logicalKey = null): void
+    {
+        if (($fileStruct['error'] ?? \UPLOAD_ERR_OK) !== \UPLOAD_ERR_OK) {
+            self::fail('file_upload_failed', $logicalKey);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $fileStruct
+     */
+    public static function assertValidTmpFile(array $fileStruct, ?string $logicalKey = null): void
+    {
+        $tmp = isset($fileStruct['tmp_name']) ? (string) $fileStruct['tmp_name'] : '';
+        if ($tmp === '') {
+            self::fail('file_upload_failed', $logicalKey);
+        }
+
+        if (is_uploaded_file($tmp)) {
+            return;
+        }
+
+        // REST/multipart uploads may use a readable temp path without is_uploaded_file().
+        if (self::hasPositiveFileSize($tmp)) {
+            return;
+        }
+
+        self::fail('file_upload_failed', $logicalKey);
+    }
+
+    private static function hasPositiveFileSize(string $path): bool
+    {
+        if (!is_readable($path)) {
+            return false;
+        }
+
+        $size = filesize($path);
+
+        return $size !== false && $size > 0;
+    }
+
+    public static function assertFileSizeWithinLimits(
+        int $size,
+        ?FieldEntity $fieldEntity,
+        ?string $logicalKey = null
+    ): void {
+        $maxBytes = wp_max_upload_size();
+        if ($maxBytes > 0 && $size > $maxBytes) {
+            self::fail('file_upload_failed', $logicalKey);
+        }
+
+        if (!$fieldEntity instanceof FieldEntity) {
+            return;
+        }
+
+        $maxMb = $fieldEntity->getFieldAdvancedSettings()->getMaxFileSizeMb();
+        if ($maxMb <= 0 || $size <= $maxMb * 1024 * 1024) {
+            return;
+        }
+
+        self::fail('file_upload_failed', $logicalKey);
+    }
+
+    /**
+     * @param array<string, mixed> $fileStruct
+     */
+    public static function assertAllowedExtension(
+        array $fileStruct,
+        ?FieldEntity $fieldEntity,
+        ?string $logicalKey = null
+    ): void {
+        if (!$fieldEntity instanceof FieldEntity) {
+            return;
+        }
+
+        self::rejectDangerousOnlyAllowList(
+            $fieldEntity->getFieldAdvancedSettings()->getAllowedFileExtensions(),
+            $logicalKey
+        );
+
+        $uploadName = isset($fileStruct['name']) ? (string) $fileStruct['name'] : '';
+        $ext = $uploadName !== '' ? strtolower(pathinfo($uploadName, PATHINFO_EXTENSION)) : '';
+
+        /**
+         * @param string $resolved
+         * @param array<string, mixed> $fileStruct
+         * @param FieldEntity $fieldEntity
+         */
+        $ext = (string) apply_filters(
+            'ivyforms/file-upload/resolve_extension',
+            $ext,
+            $fileStruct,
+            $fieldEntity
+        );
+
+        if (UploadFileExtensionPolicy::isDangerous($ext)) {
+            self::fail('file_upload_invalid_type', $logicalKey);
+        }
+
+        $allowed = $fieldEntity->getFieldAdvancedSettings()->getAllowedFileExtensions();
+        $allowed = UploadFileExtensionPolicy::normalizeExtensions($allowed);
+        /** @var array<int, mixed> $allowed */
+        $allowed = apply_filters('ivyforms/file-upload/allowed_extensions', $allowed, $fieldEntity);
+        $allowed = UploadFileExtensionPolicy::normalizeExtensions($allowed);
+
+        if ($allowed === []) {
+            if (self::isExtensionAllowedByWordPressMimes($uploadName, $ext)) {
+                return;
+            }
+
+            self::fail('file_upload_invalid_type', $logicalKey);
+        }
+
+        if ($ext !== '' && in_array($ext, $allowed, true)) {
+            return;
+        }
+
+        self::fail('file_upload_invalid_type', $logicalKey);
+    }
+
+    /**
+     * A list of only dangerous extensions must not fall through to "all types".
+     *
+     * @param array<int, string> $configured
+     */
+    private static function rejectDangerousOnlyAllowList(array $configured, ?string $logicalKey): void
+    {
+        if (!UploadFileExtensionPolicy::containsOnlyDangerous($configured)) {
+            return;
+        }
+
+        self::fail('file_upload_invalid_type', $logicalKey);
+    }
+
+    private static function isExtensionAllowedByWordPressMimes(string $uploadName, string $ext): bool
+    {
+        if ($ext === '') {
+            return false;
+        }
+
+        $checked = wp_check_filetype($uploadName);
+
+        return $checked['ext'] !== false
+            && strtolower($checked['ext']) === $ext;
+    }
+
+    public static function assertUploadCountWithinLimits(
+        int $count,
+        ?FieldEntity $fieldEntity,
+        ?string $logicalKey = null
+    ): void {
+        if (!$fieldEntity instanceof FieldEntity || $count === 0) {
+            return;
+        }
+
+        /** @var array{allowMultiple: bool, maxUploadCount: int} $limits */
+        $limits = apply_filters(
+            'ivyforms/file-upload/upload_limits',
+            [
+                'allowMultiple' => false,
+                'maxUploadCount' => 1,
+            ],
+            $fieldEntity
+        );
+
+        if (!$limits['allowMultiple'] && $count > 1) {
+            self::fail('file_upload_too_many_files', $logicalKey);
+        }
+
+        $maxCount = $limits['maxUploadCount'];
+        if ($limits['allowMultiple'] && $maxCount > 0 && $count > $maxCount) {
+            self::fail('file_upload_too_many_files', $logicalKey);
+        }
+    }
+
+    /**
+     * @param array<int, FieldEntity> $formFields
+     */
+    public static function findFieldForUploadKey(array $formFields, string $logicalKey): ?FieldEntity
+    {
+        if (!preg_match('/^file-upload_(\d+)(?:_r\d+)?$/', $logicalKey, $matches)) {
+            return null;
+        }
+        $idx = (int) $matches[1];
+        foreach ($formFields as $field) {
+            if ($field->getType() === 'file-upload' && $field->getIndex() === $idx) {
+                return $field;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @throws ValidationException
+     * @throws FieldValidationException
+     */
+    private static function fail(string $code, ?string $logicalKey = null): void
+    {
+        $strings = BackendStrings::getExceptionStrings();
+        $message = $strings[$code] ?? $strings['file_upload_failed'];
+
+        if ($logicalKey !== null && $logicalKey !== '') {
+            throw new FieldValidationException($message, [
+                $logicalKey => ['code' => $code],
+            ]);
+        }
+
+        throw new ValidationException($message);
+    }
+}

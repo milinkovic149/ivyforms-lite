@@ -1,0 +1,710 @@
+<?php
+
+namespace IvyForms\Services\Notification;
+
+use IvyForms\Common\Exceptions\InvalidArgumentException;
+use IvyForms\Common\Exceptions\NotFoundException;
+use IvyForms\Common\Exceptions\QueryExecutionException;
+use IvyForms\Common\Sanitizer\HtmlSanitizer;
+use IvyForms\Common\Sanitizer\Sanitizer;
+use IvyForms\Entity\Notification\Notification;
+use IvyForms\Factory\Notification\NotificationFactory;
+use IvyForms\Repository\Notification\NotificationRepositoryInterface;
+use IvyForms\Services\Placeholder\PlaceholderService;
+use IvyForms\Services\Media\ImageService;
+use IvyForms\Services\Translations\BackendStrings;
+use IvyForms\Services\Mailer\MailerService;
+use IvyForms\Services\Multilingual\FormTranslationApplier;
+
+/**
+ * @SuppressWarnings(PHPMD.ExcessiveClassComplexity)
+ */
+class NotificationService
+{
+    private NotificationRepositoryInterface $notificationRepository;
+    private ImageService $imageService;
+    private FormTranslationApplier $formTranslationApplier;
+
+    // Constructor injection for the NotificationRepository via PHP-DI
+    public function __construct(
+        NotificationRepositoryInterface $notificationRepository,
+        ImageService $imageService,
+        FormTranslationApplier $formTranslationApplier
+    ) {
+        $this->notificationRepository = $notificationRepository;
+        $this->imageService = $imageService;
+        $this->formTranslationApplier = $formTranslationApplier;
+    }
+
+    /**
+     * Get all notifications from the repository.
+     *
+     * @return array<mixed>|null
+     */
+    public function getAllNotifications(): ?array
+    {
+        return $this->notificationRepository->getAll();
+    }
+
+    /**
+     * Create a new notification.
+     *
+     * @param Notification $notificationData
+     *
+     * @return int Notification ID
+     */
+    public function createNotification(Notification $notificationData): int
+    {
+        // Process images in message content before saving
+        $message = $notificationData->getMessage();
+        if (!empty($message)) {
+            $processedMessage = $this->imageService->processImagesInContent($message, 'notification');
+            $notificationData->setMessage($processedMessage);
+        }
+
+        $notificationId = $this->notificationRepository->add($notificationData);
+        $notificationData->setId($notificationId);
+        $this->fireAfterPersist($notificationData, $notificationId, $notificationData->getFormId(), 'create');
+
+        return $notificationId;
+    }
+
+    /**
+     * Get a specific notification by its ID.
+     *
+     * @param int $notificationId
+     *
+     * @return object NotificationEntity
+     *
+     * @throws NotFoundException If the notification is not found
+     */
+    public function getNotificationById(int $notificationId): object
+    {
+        $notification = $this->notificationRepository->getById($notificationId);
+
+        if (!$notification) {
+            throw new NotFoundException(
+                BackendStrings::getExceptionStrings()['notification_not_found']
+            );
+        }
+
+        return $notification;
+    }
+
+    /**
+     * Update an existing notification.
+     *
+     * @param int $notificationId
+     * @param Notification $notificationData
+     *
+     * @return bool
+     */
+    public function updateNotification(int $notificationId, Notification $notificationData): bool
+    {
+        // Process images in message content before saving
+        $message = $notificationData->getMessage();
+        if (!empty($message)) {
+            $processedMessage = $this->imageService->processImagesInContent($message, 'notification');
+            $notificationData->setMessage($processedMessage);
+        }
+
+        // Validate notification data before updating
+
+        $updated = $this->notificationRepository->update($notificationId, $notificationData);
+        if ($updated) {
+            $this->fireAfterPersist($notificationData, $notificationId, $notificationData->getFormId(), 'update');
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Delete a notification by its ID.
+     *
+     * @param int $notificationId
+     *
+     * @return int
+     */
+    public function deleteNotification(int $notificationId): int
+    {
+        $notification = $this->notificationRepository->getById($notificationId);
+        $deleted = $this->notificationRepository->delete($notificationId);
+        if ($deleted && $notification instanceof Notification) {
+            $this->fireAfterPersist($notification, $notificationId, $notification->getFormId(), 'delete');
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * Delete multiple notifications by their IDs.
+     *
+     * @param array<int> $notificationIds
+     *
+     * @return int Number of deleted notifications
+     */
+    public function deleteNotifications(array $notificationIds): int
+    {
+        $formIds = [];
+        foreach ($notificationIds as $notificationId) {
+            $notification = $this->notificationRepository->getById((int) $notificationId);
+            if ($notification instanceof Notification) {
+                $formIds[$notification->getFormId()] = $notification;
+            }
+        }
+
+        $deleted = $this->notificationRepository->deleteMany($notificationIds);
+        foreach ($formIds as $formId => $notification) {
+            $this->fireAfterPersist($notification, $notification->getId(), (int) $formId, 'delete');
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * Get notifications by form ID.
+     *
+     * @param int $formId
+     *
+     * @return array<Notification>
+     */
+    public function getNotificationsByFormId(int $formId): array
+    {
+        return $this->notificationRepository->getAllById($formId);
+    }
+
+    /**
+     * Get active notifications by form ID.
+     *
+     * @param int $formId
+     *
+     * @return array<Notification>
+     *
+     */
+    public function getActiveNotificationsByFormId(int $formId): array
+    {
+        $notification = $this->notificationRepository->getAllActiveById($formId);
+
+        // TODO Implement handling no notifications found, but do not return an error to the user
+        // For now, log the error if WP_DEBUG is enabled
+        if (!$notification && defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(BackendStrings::getExceptionStrings()['active_notif_not_found']);
+        }
+
+        return $notification;
+    }
+
+    /**
+     * Delete notifications by multiple form IDs.
+     *
+     * @param array<int> $formIds
+     *
+     * @return int Number of deleted notifications
+     * @throws InvalidArgumentException If no form IDs are provided
+     */
+    public function deleteNotificationsByFormIds(array $formIds): int
+    {
+        if (empty($formIds)) {
+            throw new InvalidArgumentException(
+                BackendStrings::getExceptionStrings()['no_form_ids_provided']
+            );
+        }
+
+        return $this->notificationRepository->deleteManyByForeignKeyValues($formIds);
+    }
+
+    /**
+     * Duplicate notifications from one form to another.
+     *
+     * @param int $originalFormId
+     * @param int $newFormId
+     *
+     * @return void
+     * @throws NotFoundException
+     * @throws InvalidArgumentException
+     */
+    public function duplicateNotifications(int $originalFormId, int $newFormId): void
+    {
+        $notifications = $this->getNotificationsByFormId($originalFormId);
+        foreach ($notifications as $notification) {
+            $notificationData = $notification->toArray();
+            unset($notificationData['id']);
+            $notificationData['formId'] = $newFormId;
+
+            $this->createNotification(NotificationFactory::create($notificationData));
+        }
+    }
+
+    /**
+     * Search notifications with pagination and sorting
+     *
+     * @param array<string, mixed> $params
+     *
+     * @return array<string, mixed>
+     */
+    public function searchNotifications(array $params): array
+    {
+        return $this->notificationRepository->search($params);
+    }
+
+    /**
+     * Create a default notification for a form.
+     *
+     * @param int $formId
+     * @param string $formName
+     * @param string $adminEmail
+     *
+     * @return void
+     * @throws InvalidArgumentException|QueryExecutionException
+     */
+    public function createDefaultNotificationForForm(int $formId, string $formName, string $adminEmail): void
+    {
+        $defaultNotification = [
+            'formId'      => $formId,
+            'name'        => BackendStrings::getAllFormsStrings()['admin_notification_email'],
+            'sender'      => $adminEmail,
+            'receiver'    => $adminEmail,
+            'enabled'     => 1,
+            'subject'     => $formName,
+            'message'     => '{{all_data}}',
+            'smartLogic'  => [
+                'enabled' => false,
+                'match' => 'any',
+                'rules' => [],
+            ],
+        ];
+        $notification = NotificationFactory::create($defaultNotification);
+        $notificationId = $this->createNotification($notification);
+        if (!$notificationId) {
+            throw new QueryExecutionException(
+                BackendStrings::getSettingsFormBuilderStrings()['failed_to_create_default_notification']
+            );
+        }
+        $notification->setId($notificationId);
+    }
+
+    /**
+     * Process notifications for the form.
+     *
+     * @param int $formId
+     * @param array<mixed> $submissionData
+     * @param array<mixed> $formFields
+     * @param array<string, mixed> $fieldData
+     * @param array<string, mixed> $generalData
+     * @param MailerService $mailerService
+     * @param array<string, string> $fieldLabels
+     * @param string|null $language Submission language code, or null for the provider default
+     * @return bool
+     */
+    public function processNotifications(
+        int $formId,
+        array $submissionData,
+        array $formFields,
+        array $fieldData,
+        array $generalData,
+        MailerService $mailerService,
+        array $fieldLabels = [],
+        ?string $language = null
+    ): bool {
+        $activeNotifications = $this->getActiveNotificationsByFormId($formId);
+        $exceptionStrings = BackendStrings::getExceptionStrings();
+
+        foreach ($activeNotifications as $notification) {
+            if (empty($notification->getNotificationContact()->getReceiver())) {
+                continue;
+            }
+
+            $shouldSend = apply_filters(
+                'ivyforms/notification/should_send',
+                true,
+                $notification->getSmartLogic(),
+                $submissionData,
+                $formFields,
+                $notification,
+                $formId
+            );
+
+            if (!$shouldSend) {
+                continue;
+            }
+
+            if (
+                !$this->dispatchNotificationEmail(
+                    $notification,
+                    $formId,
+                    $submissionData,
+                    $formFields,
+                    $fieldData,
+                    $generalData,
+                    $mailerService,
+                    $fieldLabels,
+                    $exceptionStrings,
+                    $language
+                )
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Resolve placeholders, apply attachments, and send one notification email.
+     *
+     * @param Notification $notification
+     * @param int $formId
+     * @param array<mixed> $submissionData
+     * @param array<mixed> $formFields
+     * @param array<string, mixed> $fieldData
+     * @param array<string, mixed> $generalData
+     * @param MailerService $mailerService
+     * @param array<string, string> $fieldLabels
+     * @param array<string, string> $exceptionStrings
+     * @param string|null $language
+     * @return bool False when sender/receiver are invalid; true otherwise (send failure is logged)
+     */
+    private function dispatchNotificationEmail(
+        Notification $notification,
+        int $formId,
+        array $submissionData,
+        array $formFields,
+        array $fieldData,
+        array $generalData,
+        MailerService $mailerService,
+        array $fieldLabels,
+        array $exceptionStrings,
+        ?string $language = null
+    ): bool {
+        $this->applySubmissionTranslations($notification, $formId, $language);
+
+        if (
+            !$this->hydrateNotificationForSend(
+                $notification,
+                $fieldData,
+                $generalData,
+                $fieldLabels,
+                $exceptionStrings
+            )
+        ) {
+            return false;
+        }
+
+        $this->sendHydratedNotificationEmail(
+            $notification,
+            $formId,
+            $submissionData,
+            $formFields,
+            $fieldData,
+            $mailerService,
+            $exceptionStrings
+        );
+
+        return true;
+    }
+
+    /**
+     * Resolve and apply sender/receiver/replyTo/cc/bcc/subject/message onto the notification.
+     *
+     * @param Notification $notification
+     * @param array<string, mixed> $fieldData
+     * @param array<string, mixed> $generalData
+     * @param array<string, string> $fieldLabels
+     * @param array<string, string> $exceptionStrings
+     */
+    private function hydrateNotificationForSend(
+        Notification $notification,
+        array $fieldData,
+        array $generalData,
+        array $fieldLabels,
+        array $exceptionStrings
+    ): bool {
+        $contact = $notification->getNotificationContact();
+        $sender = $this->resolveAddress($contact->getSender(), $fieldData, $generalData, $fieldLabels);
+        $receiver = $this->resolveAddress($contact->getReceiver(), $fieldData, $generalData, $fieldLabels);
+
+        if ($sender === '' || $receiver === '') {
+            error_log(
+                $exceptionStrings['error_log_invalid_email'] . $sender . ' ' . $receiver
+            );
+            return false;
+        }
+
+        $contact->setSender($sender);
+        $contact->setReceiver($receiver);
+        $contact->setReplyTo(
+            $this->resolveReplyTo($contact->getReplyTo(), $sender, $fieldData, $generalData, $fieldLabels)
+        );
+        $contact->setCc(
+            $this->resolveAddressList($contact->getCc(), $fieldData, $generalData, $fieldLabels)
+        );
+        $contact->setBcc(
+            $this->resolveAddressList($contact->getBcc(), $fieldData, $generalData, $fieldLabels)
+        );
+        $notification->setSubject(
+            PlaceholderService::replacePlaceholdersAsSingleLine(
+                $notification->getSubject(),
+                $fieldData,
+                $generalData,
+                $fieldLabels,
+                $notification
+            )
+        );
+        $notification->setMessage(
+            $this->buildSafeMessage(
+                $notification->getMessage(),
+                $fieldData,
+                $generalData,
+                $fieldLabels,
+                $notification
+            )
+        );
+
+        return true;
+    }
+
+    /**
+     * @param Notification $notification
+     * @param int $formId
+     * @param array<mixed> $submissionData
+     * @param array<mixed> $formFields
+     * @param array<string, mixed> $fieldData
+     * @param MailerService $mailerService
+     * @param array<string, string> $exceptionStrings
+     */
+    private function sendHydratedNotificationEmail(
+        Notification $notification,
+        int $formId,
+        array $submissionData,
+        array $formFields,
+        array $fieldData,
+        MailerService $mailerService,
+        array $exceptionStrings
+    ): void {
+        $sent = $mailerService->sendEmail(
+            $notification,
+            $submissionData,
+            $this->resolveEmailAttachments($notification, $submissionData, $formFields, $fieldData)
+        );
+
+        if ($sent) {
+            return;
+        }
+
+        error_log($exceptionStrings['error_log_failed_send'] . ' ' . $formId);
+    }
+
+    /**
+     * @param string $template
+     * @param string $sender
+     * @param array<string, mixed> $fieldData
+     * @param array<string, mixed> $generalData
+     * @param array<string, string> $fieldLabels
+     */
+    private function resolveReplyTo(
+        string $template,
+        string $sender,
+        array $fieldData,
+        array $generalData,
+        array $fieldLabels
+    ): string {
+        $replyTo = $this->resolveAddress($template, $fieldData, $generalData, $fieldLabels);
+
+        return $replyTo !== '' ? $replyTo : $sender;
+    }
+
+    /**
+     * @param Notification $notification
+     * @param array<mixed> $submissionData
+     * @param array<mixed> $formFields
+     * @param array<string, mixed> $fieldData
+     * @return string[]
+     */
+    private function resolveEmailAttachments(
+        Notification $notification,
+        array $submissionData,
+        array $formFields,
+        array $fieldData
+    ): array {
+        /**
+         * Local file paths to attach to the notification email (Pro file attachments).
+         *
+         * @since 1.2.0
+         *
+         * @param mixed $attachments
+         * @param \IvyForms\Entity\Notification\Notification $notification
+         * @param array<string, mixed> $submissionData
+         * @param array<int, mixed> $formFields
+         * @param array<string, mixed> $fieldData
+         */
+        $attachments = apply_filters(
+            'ivyforms/notification/email_attachments',
+            [],
+            $notification,
+            $submissionData,
+            $formFields,
+            $fieldData
+        );
+
+        if (!is_array($attachments)) {
+            return [];
+        }
+
+        $paths = [];
+        foreach ($attachments as $path) {
+            if (!is_string($path) || $path === '') {
+                continue;
+            }
+            $paths[] = $path;
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Resolve an email address template that may contain placeholders
+     *
+     * Returns the original replaced string when valid, or empty string when invalid.
+     *
+     * @param string $template
+     * @param array<string,mixed> $fieldData
+     * @param array<string,mixed> $generalData
+     * @param array<string,string> $fieldLabels
+     * @return string
+     */
+    private function resolveAddress(string $template, array $fieldData, array $generalData, array $fieldLabels): string
+    {
+        if (Sanitizer::containsEmailHeaderInjection($template)) {
+            return '';
+        }
+
+        $rawReplaced = PlaceholderService::replacePlaceholdersAsText(
+            $template,
+            $fieldData,
+            $generalData,
+            $fieldLabels
+        );
+
+        if (Sanitizer::containsEmailHeaderInjection($rawReplaced)) {
+            return '';
+        }
+
+        $emailCandidate = $rawReplaced;
+        if (preg_match('/<([^>]+)>/', $rawReplaced, $match)) {
+            $emailCandidate = trim($match[1]);
+        }
+
+        return Sanitizer::isValidEmail($emailCandidate) ? $rawReplaced : '';
+    }
+
+    /**
+     * Resolve a comma-separated list of email address templates.
+     *
+     * @param string $template
+     * @param array<string,mixed> $fieldData
+     * @param array<string,mixed> $generalData
+     * @param array<string,string> $fieldLabels
+     * @return string
+     */
+    private function resolveAddressList(
+        string $template,
+        array $fieldData,
+        array $generalData,
+        array $fieldLabels
+    ): string {
+        $template = trim($template);
+        if ($template === '') {
+            return '';
+        }
+
+        $parts = array_map('trim', explode(',', $template));
+        $resolved = [];
+
+        foreach ($parts as $part) {
+            if ($part === '' || Sanitizer::containsEmailHeaderInjection($part)) {
+                continue;
+            }
+
+            $address = $this->resolveAddress($part, $fieldData, $generalData, $fieldLabels);
+            if ($address !== '') {
+                $resolved[] = $address;
+            }
+        }
+
+        return implode(', ', $resolved);
+    }
+
+    /**
+     * Build a sanitized HTML message from a template with placeholders.
+     *
+     * @param string $template
+     * @param array<string,mixed> $fieldData
+     * @param array<string,mixed> $generalData
+     * @param array<string,string> $fieldLabels
+     * @param Notification $notification
+     * @return string
+     */
+    private function buildSafeMessage(
+        string $template,
+        array $fieldData,
+        array $generalData,
+        array $fieldLabels,
+        Notification $notification
+    ): string {
+        $message = PlaceholderService::replacePlaceholders(
+            $template,
+            $fieldData,
+            $generalData,
+            $fieldLabels,
+            $notification
+        );
+
+        return HtmlSanitizer::sanitizeHtmlContent($message);
+    }
+
+    private function applySubmissionTranslations(
+        Notification $notification,
+        int $formId,
+        ?string $language
+    ): void {
+        $notification->setSubject(
+            $this->formTranslationApplier->translateNotificationSubject(
+                $formId,
+                $notification->getId(),
+                $notification->getSubject(),
+                $language
+            )
+        );
+        $notification->setMessage(
+            $this->formTranslationApplier->translateNotificationMessage(
+                $formId,
+                $notification->getId(),
+                $notification->getMessage(),
+                $language
+            )
+        );
+    }
+
+    /**
+     * @param Notification $notification
+     */
+    private function fireAfterPersist(
+        Notification $notification,
+        int $notificationId,
+        int $formId,
+        string $context
+    ): void {
+        /**
+         * After a notification is created, updated, or deleted.
+         *
+         * @since 1.6.0
+         *
+         * Arguments:
+         * - Notification $notification
+         * - int $notificationId
+         * - int $formId
+         * - string $context create|update|delete
+         */
+        do_action('ivyforms/notification/after_persist', $notification, $notificationId, $formId, $context);
+    }
+}

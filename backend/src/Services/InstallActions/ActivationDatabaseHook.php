@@ -1,0 +1,47 @@
+<?php
+
+/**
+ * Database hook for activation
+ */
+
+namespace IvyForms\Services\InstallActions;
+
+use IvyForms\Services\InstallActions\DB\Confirmation\ConfirmationsTable;
+use IvyForms\Services\InstallActions\DB\Entry\EntriesTable;
+use IvyForms\Services\InstallActions\DB\EntryField\EntryFieldsTable;
+use IvyForms\Services\InstallActions\DB\Field\FieldsTable;
+use IvyForms\Services\InstallActions\DB\Form\FormsTable;
+use IvyForms\Services\InstallActions\DB\Notification\NotificationsTable;
+use IvyForms\Services\InstallActions\DB\FieldOptions\FieldOptionsTable;
+use IvyForms\Services\InstallActions\DB\GoogleSheets\GoogleSheetsTable;
+use IvyForms\Services\InstallActions\DB\Payment\OrdersTable;
+use IvyForms\Services\InstallActions\DB\Payment\PaymentsTable;
+use IvyForms\Services\InstallActions\Migrations\EnsureSlackFeedsTable;
+
+/**
+ * Class ActivationHook
+ *
+ * @package IvyForms\Services\InstallActions
+ */
+class ActivationDatabaseHook
+{
+    /**
+     * Initialize the plugin
+     */
+    public static function init(): void
+    {
+        FormsTable::init();
+        FieldsTable::init();
+        NotificationsTable::init();
+        ConfirmationsTable::init();
+        EntriesTable::init();
+        EntryFieldsTable::init();
+        FieldOptionsTable::init();
+        GoogleSheetsTable::init();
+        PaymentsTable::init();
+        OrdersTable::init();
+        EnsureSlackFeedsTable::run();
+
+        DatabaseMigrationRunner::run();
+    }
+}
